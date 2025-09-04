@@ -87,11 +87,22 @@ public class Config {
                     "fly hacks"
             ), o -> o instanceof String);
 
+    public static final ForgeConfigSpec.BooleanValue DEBUG_MODE = BUILDER
+            .comment("Включить отладочные сообщения в логи")
+            .define("debugMode", true);
+
+    public static final ForgeConfigSpec.BooleanValue LOG_RAW_MESSAGES = BUILDER
+            .comment("Логировать сырые сообщения чата для отладки")
+            .define("logRawMessages", true);
+
+
     static final ForgeConfigSpec SPEC = BUILDER.build();
 
     // Статические поля для быстрого доступа
     public static boolean enableHud;
     public static int maxMessages;
+    public static boolean debugMode;
+    public static boolean logRawMessages;
     public static int showLast;
     public static int hudX;
     public static int hudY;
@@ -123,6 +134,8 @@ public class Config {
         enableLogging = ENABLE_LOGGING.get();
         logAllChat = LOG_ALL_CHAT.get();
         violationKeywords = VIOLATION_KEYWORDS.get();
+        debugMode = DEBUG_MODE.get();
+        logRawMessages = LOG_RAW_MESSAGES.get();
 
         Scs.LOGGER.info("ScS Config loaded successfully!");
     }

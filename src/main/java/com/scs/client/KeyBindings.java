@@ -10,7 +10,6 @@ import net.minecraftforge.fml.common.Mod;
 import org.lwjgl.glfw.GLFW;
 import com.scs.Scs;
 
-@Mod.EventBusSubscriber(modid = Scs.MODID, value = Dist.CLIENT, bus = Mod.EventBusSubscriber.Bus.FORGE)
 public class KeyBindings {
 
     public static final KeyMapping TOGGLE_HUD = new KeyMapping(
@@ -31,6 +30,7 @@ public class KeyBindings {
             "key.categories.scs"
     );
 
+    // Регистрация ключей - это событие mod bus
     @SubscribeEvent
     public static void onRegisterKeyMappings(RegisterKeyMappingsEvent event) {
         event.register(TOGGLE_HUD);
@@ -38,22 +38,26 @@ public class KeyBindings {
         event.register(CLEAR_ENTRIES);
     }
 
-    @SubscribeEvent
-    public static void onKeyInput(InputEvent.Key event) {
-        Minecraft mc = Minecraft.getInstance();
+    // Обработка нажатий - это событие forge bus, поэтому создаем отдельный класс
+    @Mod.EventBusSubscriber(modid = Scs.MODID, value = Dist.CLIENT, bus = Mod.EventBusSubscriber.Bus.FORGE)
+    public static class KeyInputHandler {
+        @SubscribeEvent
+        public static void onKeyInput(InputEvent.Key event) {
+            Minecraft mc = Minecraft.getInstance();
 
-        if (TOGGLE_HUD.consumeClick()) {
-            HudOverlay.toggleHud();
-        }
+            if (TOGGLE_HUD.consumeClick()) {
+                HudOverlay.toggleHud();
+            }
 
-        if (SHOW_HISTORY.consumeClick()) {
-            mc.setScreen(new ChatHistoryScreen());
-        }
+            if (SHOW_HISTORY.consumeClick()) {
+                mc.setScreen(new ChatHistoryScreen());
+            }
 
-        if (CLEAR_ENTRIES.consumeClick()) {
-            ChatTap.clearEntries();
-            mc.gui.getChat().addMessage(net.minecraft.network.chat.Component.literal(
-                    "§e[ScS] История очищена!"));
+            if (CLEAR_ENTRIES.consumeClick()) {
+                ChatTap.clearEntries();
+                mc.gui.getChat().addMessage(net.minecraft.network.chat.Component.literal(
+                        "§e[ScS] История очищена!"));
+            }
         }
     }
 }

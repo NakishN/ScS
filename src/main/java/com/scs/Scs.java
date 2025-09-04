@@ -25,16 +25,16 @@ public final class Scs {
 
         // Только на клиенте
         DistExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () -> {
-            // Регистрируем обработчики событий
+            // Регистрируем универсальный перехватчик чата
             MinecraftForge.EVENT_BUS.register(new ChatTap());
             MinecraftForge.EVENT_BUS.register(new HudOverlay());
             MinecraftForge.EVENT_BUS.register(new ChatButtonHandler());
-            MinecraftForge.EVENT_BUS.register(KeyBindings.class);
+            // KeyInputHandler автоматически регистрируется через аннотацию
 
-            // Регистрируем клавиши
+            // Регистрируем обработчики для mod event bus (регистрация клавиш)
             FMLJavaModLoadingContext.get().getModEventBus().register(KeyBindings.class);
 
-            LOGGER.info("ScS mod initialized successfully!");
+            LOGGER.info("ScS mod initialized successfully with universal chat interceptor!");
         });
     }
 }
