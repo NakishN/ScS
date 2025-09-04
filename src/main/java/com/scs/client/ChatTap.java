@@ -11,7 +11,6 @@ import net.minecraft.network.chat.HoverEvent;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.components.ChatComponent;
-import net.minecraft.client.gui.Gui;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import com.scs.Config;
@@ -26,7 +25,6 @@ import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.Deque;
 import java.util.regex.*;
 import java.util.List;
-import java.util.ArrayList;
 import java.util.Set;
 import java.util.HashSet;
 import java.nio.file.Files;
@@ -41,41 +39,47 @@ public final class ChatTap {
     private static final int MAX = 100;
     public static final Deque<Entry> ENTRIES = new ConcurrentLinkedDeque<>();
     public static final Deque<ViolationEntry> VIOLATIONS = new ConcurrentLinkedDeque<>();
+    public static final Deque<PlayerChatEntry> PLAYER_CHAT = new ConcurrentLinkedDeque<>();
 
     private static final Path LOG_FILE = Paths.get("logs", "scs-chat.log");
     private static final DateTimeFormatter LOG_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS");
 
-    // Кэш для предотвращения дубликатов
     private static final Set<String> processedMessages = new HashSet<>();
-    private static int lastChatSize = 0;
-    private static boolean structureAnalyzed = false;
+    private static ChatComponent hookedChatComponent = null;
+    private static Method originalAddMessageMethod = null;
+    private static boolean hookInstalled = false;
+    private static int tickCounter = 0;
 
-    // Reflection кэш
-    private static final List<Field> stringListFields = new ArrayList<>();
-    private static final List<Field> componentListFields = new ArrayList<>();
-    private static final List<Field> otherFields = new ArrayList<>();
+    // Улучшенные паттерны
+    private static final Pattern[] ANTICHEAT_PATTERNS = {
+            Pattern.compile(".*\\[.*анти.*чит.*\\]\\s*(\\w+)\\s+(.+?)(?:\\s*\\((.+?)\\))?(?:\\s*#(\\d+))?", Pattern.CASE_INSENSITIVE),
+            Pattern.compile(".*(\\w+)\\s+(tried to .+?)(?:\\s*\\((.+?)\\))?(?:\\s*#(\\d+))?", Pattern.CASE_INSENSITIVE),
+            Pattern.compile(".*(\\w+)\\s+(suspected .+?)(?:\\s*\\((.+?)\\))?(?:\\s*#(\\d+))?", Pattern.CASE_INSENSITIVE),
+            Pattern.compile(".*(\\w+)\\s+tried to move abnormally.*(?:\\((.+?)\\))?(?:\\s*#(\\d+))?", Pattern.CASE_INSENSITIVE),
+            Pattern.compile(".*(\\w+)\\s+suspected using.*(?:\\((.+?)\\))?(?:\\s*#(\\d+))?", Pattern.CASE_INSENSITIVE),
+    };
 
-    // Паттерны
+    // ИСПРАВЛЕННЫЕ паттерны для проверок (учитывают пробелы в начале)
     private static final Pattern[] CHECK_PATTERNS = {
             Pattern.compile(".*[►▶]\\s*проверка.*успешно.*начата.*", Pattern.CASE_INSENSITIVE),
             Pattern.compile(".*проверка.*успешно.*начата.*", Pattern.CASE_INSENSITIVE),
     };
 
     private static final Pattern[] PLAYER_PATTERNS = {
-            Pattern.compile(".*проверяемый.*игрок.*[:\\s]+(\\w+).*", Pattern.CASE_INSENSITIVE),
-            Pattern.compile(".*игрок.*[:\\s]+(\\w+).*", Pattern.CASE_INSENSITIVE),
+            Pattern.compile(".*проверяемый\\s+игрок\\s*[:：]\\s*(\\w+).*", Pattern.CASE_INSENSITIVE),
+            Pattern.compile(".*игрок\\s*[:：]\\s*(\\w+).*", Pattern.CASE_INSENSITIVE),
     };
 
     private static final Pattern[] MODE_PATTERNS = {
-            Pattern.compile(".*режим.*[:\\s]+(.+?)(?:\\s*$)", Pattern.CASE_INSENSITIVE),
+            Pattern.compile(".*вы\\s+находитесь\\s+на\\s+режиме\\s*[:：]\\s*(.+?)\\s*$", Pattern.CASE_INSENSITIVE),
+            Pattern.compile(".*режим\\s*[:：]\\s*(.+?)\\s*$", Pattern.CASE_INSENSITIVE),
     };
 
-    private static final Pattern[] ANTICHEAT_PATTERNS = {
-            Pattern.compile(".*\\[.*анти.*чит.*\\]\\s*(\\w+)\\s+(.+?)(?:\\s*\\((.+?)\\))?(?:\\s*#(\\d+))?", Pattern.CASE_INSENSITIVE),
-            Pattern.compile(".*(\\w+)\\s+(tried to .+?)(?:\\s*\\((.+?)\\))?(?:\\s*#(\\d+))?", Pattern.CASE_INSENSITIVE),
-            Pattern.compile(".*(\\w+)\\s+(might be .+?)(?:\\s*\\((.+?)\\))?(?:\\s*#(\\d+))?", Pattern.CASE_INSENSITIVE),
-            Pattern.compile(".*(\\w+)\\s+(is using .+?)(?:\\s*\\((.+?)\\))?(?:\\s*#(\\d+))?", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("^.*\\]\\s*(\\w+)\\s+(.+?)(?:\\s*\\((.+?)\\))?(?:\\s*#(\\d+))?", Pattern.CASE_INSENSITIVE),
+    // Паттерны для чата игроков
+    private static final Pattern[] PLAYER_CHAT_PATTERNS = {
+            Pattern.compile(".*[«»]\\s*([a-zA-Z0-9_]+)\\s*[»]\\s*(.+)", Pattern.CASE_INSENSITIVE),
+            Pattern.compile(".*ᴄʜᴇᴀᴛᴇʀ.*[»]\\s*(\\w+)\\s*[»]\\s*(.+)", Pattern.CASE_INSENSITIVE),
+            Pattern.compile(".*(\\w+)\\s*[»]\\s*(.+)", Pattern.CASE_INSENSITIVE),
     };
 
     public static final class Entry {
@@ -127,23 +131,23 @@ public final class ChatTap {
             String v = violation.toLowerCase();
             return v.contains("combat") || v.contains("killaura") || v.contains("speed") ||
                     v.contains("fly") || v.contains("bot") || v.contains("velocity") ||
-                    v.contains("hack") || v.contains("aura");
+                    v.contains("hack") || v.contains("aura") || v.contains("vehicle");
         }
     }
 
-    // Fallback - пытаемся поймать через события
-    @SubscribeEvent
-    public void onClientChatReceived(ClientChatReceivedEvent event) {
-        try {
-            Component message = event.getMessage();
-            if (message != null) {
-                String text = message.getString();
-                if (text != null && !text.trim().isEmpty()) {
-                    processMessage(text, "EVENT");
-                }
-            }
-        } catch (Exception e) {
-            Scs.LOGGER.error("[ScS-EVENT] Error: {}", e.getMessage());
+    public static final class PlayerChatEntry {
+        public final Instant timestamp;
+        public final String kind;
+        public final String text;
+        public final String playerName;
+        public final String message;
+
+        public PlayerChatEntry(String playerName, String message) {
+            this.timestamp = Instant.now();
+            this.kind = "CHAT";
+            this.text = playerName + ": " + message;
+            this.playerName = playerName;
+            this.message = message;
         }
     }
 
@@ -151,274 +155,267 @@ public final class ChatTap {
     public void onClientTick(TickEvent.ClientTickEvent event) {
         if (event.phase != TickEvent.Phase.END) return;
 
+        tickCounter++;
+
         try {
             Minecraft mc = Minecraft.getInstance();
-            if (mc.gui == null) return;
+            if (mc.gui == null || mc.gui.getChat() == null) return;
 
-            // Анализируем структуру один раз
-            if (!structureAnalyzed) {
-                analyzeStructure(mc.gui);
-                structureAnalyzed = true;
+            ChatComponent chatComponent = mc.gui.getChat();
+
+            if (!hookInstalled) {
+                installChatHook(chatComponent);
+                hookInstalled = true;
             }
 
-            // Проверяем чат разными способами
-            checkChatViaReflection(mc.gui);
-            checkGuiChat(mc.gui);
-
-        } catch (Exception e) {
-            Scs.LOGGER.error("[ScS-TICK] Error: {}", e.getMessage());
-        }
-    }
-
-    private static void analyzeStructure(Gui gui) {
-        try {
-            Scs.LOGGER.info("[ScS-STRUCTURE] Analyzing chat structure...");
-
-            // Анализируем Gui
-            analyzeClass(gui, "GUI");
-
-            // Анализируем ChatComponent если доступен
-            if (gui.getChat() != null) {
-                analyzeClass(gui.getChat(), "CHAT");
+            // Сканируем чат каждые 2 тика
+            if (tickCounter % 2 == 0) {
+                scanChatViaReflection(chatComponent);
             }
 
         } catch (Exception e) {
-            Scs.LOGGER.error("[ScS-STRUCTURE] Error analyzing: {}", e.getMessage());
+            Scs.LOGGER.error("[ScS] Tick error: {}", e.getMessage());
         }
     }
 
-    private static void analyzeClass(Object obj, String prefix) {
+    @SubscribeEvent
+    public void onClientChatReceived(ClientChatReceivedEvent event) {
         try {
-            Class<?> clazz = obj.getClass();
-            Scs.LOGGER.info("[ScS-STRUCTURE-{}] Class: {}", prefix, clazz.getSimpleName());
+            if (event.getMessage() != null) {
+                processMessage(event.getMessage().getString(), "EVENT");
+            }
+        } catch (Exception ignored) {}
+    }
 
-            // Анализируем все поля
-            for (Field field : clazz.getDeclaredFields()) {
+    private static void installChatHook(ChatComponent chatComponent) {
+        try {
+            Scs.LOGGER.info("[ScS] Installing chat hook...");
+            hookedChatComponent = chatComponent;
+
+            Method[] methods = ChatComponent.class.getDeclaredMethods();
+            for (Method method : methods) {
+                if (method.getName().contains("addMessage") || method.getName().contains("add")) {
+                    method.setAccessible(true);
+                    originalAddMessageMethod = method;
+                    Scs.LOGGER.info("[ScS] Found method: {}", method.getName());
+                }
+            }
+        } catch (Exception e) {
+            Scs.LOGGER.error("[ScS] Failed to install hook: {}", e.getMessage());
+        }
+    }
+
+    private static void createChatProxy(ChatComponent chatComponent) {
+        try {
+            // Заглушка для совместимости с оригинальным кодом
+        } catch (Exception e) {
+            Scs.LOGGER.error("[ScS] Failed to create proxy: {}", e.getMessage());
+        }
+    }
+
+    private static void scanChatViaReflection(ChatComponent chatComponent) {
+        try {
+            Class<?> chatClass = chatComponent.getClass();
+
+            for (Field field : chatClass.getDeclaredFields()) {
                 field.setAccessible(true);
 
                 try {
-                    Object value = field.get(obj);
-                    String fieldInfo = String.format("Field: %s, Type: %s, Value type: %s",
-                            field.getName(),
-                            field.getType().getSimpleName(),
-                            value != null ? value.getClass().getSimpleName() : "null");
-
-                    Scs.LOGGER.info("[ScS-STRUCTURE-{}] {}", prefix, fieldInfo);
-
-                    // Классифицируем поля по типам
-                    if (List.class.isAssignableFrom(field.getType()) && value instanceof List) {
+                    Object value = field.get(chatComponent);
+                    if (value instanceof List) {
                         List<?> list = (List<?>) value;
                         if (!list.isEmpty()) {
-                            Object firstItem = list.get(0);
-                            String listInfo = String.format("List field: %s, size: %d, item type: %s",
-                                    field.getName(), list.size(), firstItem.getClass().getSimpleName());
-                            Scs.LOGGER.info("[ScS-STRUCTURE-{}] {}", prefix, listInfo);
-
-                            if (firstItem instanceof String) {
-                                stringListFields.add(field);
-                            } else if (firstItem instanceof Component) {
-                                componentListFields.add(field);
-                            } else {
-                                otherFields.add(field);
-                            }
+                            scanListField(list, field.getName());
                         }
                     }
                 } catch (Exception e) {
-                    Scs.LOGGER.warn("[ScS-STRUCTURE-{}] Error accessing field {}: {}", prefix, field.getName(), e.getMessage());
-                }
-            }
-
-            // Анализируем методы
-            for (Method method : clazz.getDeclaredMethods()) {
-                if (method.getName().toLowerCase().contains("message") ||
-                        method.getName().toLowerCase().contains("chat")) {
-
-                    String methodInfo = String.format("Method: %s, params: %s, return: %s",
-                            method.getName(),
-                            java.util.Arrays.toString(method.getParameterTypes()),
-                            method.getReturnType().getSimpleName());
-
-                    Scs.LOGGER.info("[ScS-STRUCTURE-{}] {}", prefix, methodInfo);
+                    // Продолжаем сканирование
                 }
             }
 
         } catch (Exception e) {
-            Scs.LOGGER.error("[ScS-STRUCTURE-{}] Error analyzing class: {}", prefix, e.getMessage());
+            Scs.LOGGER.error("[ScS] Scan error: {}", e.getMessage());
         }
     }
 
-    private static void checkChatViaReflection(Gui gui) {
+    // УЛУЧШЕННОЕ СКАНИРОВАНИЕ СПИСКОВ
+    private static void scanListField(List<?> list, String fieldName) {
         try {
-            // Проверяем String поля (самый вероятный случай для 1.21.3)
-            for (Field field : stringListFields) {
-                checkStringListField(gui.getChat(), field);
-            }
+            for (Object item : list) {
+                if (item == null) continue;
 
-            // Проверяем Component поля
-            for (Field field : componentListFields) {
-                checkComponentListField(gui.getChat(), field);
-            }
+                String text = extractTextFromObject(item);
 
-            // Проверяем другие поля
-            for (Field field : otherFields) {
-                checkOtherField(gui.getChat(), field);
-            }
+                if (text != null && text.length() > 5 && !processedMessages.contains(text)) {
+                    processedMessages.add(text);
 
-        } catch (Exception e) {
-            Scs.LOGGER.error("[ScS-REFLECTION] Error checking chat: {}", e.getMessage());
-        }
-    }
+                    // ЧИСТЫЕ ЛОГИ - только важное
+                    if (text.contains("Анти-Чит") || text.contains("tried to") || text.contains("suspected") ||
+                            text.contains("Проверка") || text.contains("игрок") || text.contains("режим") ||
+                            text.contains("ᴄʜᴇᴀᴛᴇʀ")) {
+                        Scs.LOGGER.info("[ScS-{}] Found: {}", fieldName, text);
+                        processMessage(text, "SCAN-" + fieldName.toUpperCase());
+                    }
 
-    @SuppressWarnings("unchecked")
-    private static void checkStringListField(Object chatComponent, Field field) {
-        try {
-            List<String> messages = (List<String>) field.get(chatComponent);
-            if (messages == null || messages.isEmpty()) return;
-
-            for (String message : messages) {
-                if (message != null && !processedMessages.contains(message)) {
-                    processedMessages.add(message);
-                    processMessage(message, "STRING-REFLECTION");
-
-                    if (processedMessages.size() > 200) {
-                        processedMessages.clear(); // Очищаем кэш
+                    if (processedMessages.size() > 300) {
+                        processedMessages.clear();
                     }
                 }
             }
-        } catch (Exception e) {
-            // Игнорируем ошибки cast
-        }
+        } catch (Exception ignored) {}
     }
 
-    @SuppressWarnings("unchecked")
-    private static void checkComponentListField(Object chatComponent, Field field) {
+    // УЛУЧШЕННОЕ ИЗВЛЕЧЕНИЕ ТЕКСТА ИЗ ОБЪЕКТОВ
+    private static String extractTextFromObject(Object item) {
         try {
-            List<Component> messages = (List<Component>) field.get(chatComponent);
-            if (messages == null || messages.isEmpty()) return;
+            if (item instanceof String) {
+                return (String) item;
+            } else if (item instanceof Component) {
+                Component comp = (Component) item;
+                return extractFullTextFromComponent(comp);
+            } else {
+                String itemStr = item.toString();
+                // Только если содержит ключевые слова
+                if (itemStr.contains("Анти-Чит") || itemStr.contains("tried to") ||
+                        itemStr.contains("suspected") || itemStr.contains("Move") ||
+                        itemStr.contains("Vehicle") || itemStr.contains("Combat") ||
+                        itemStr.contains("Проверка") || itemStr.contains("игрок") ||
+                        itemStr.contains("режим") || itemStr.contains("ᴄʜᴇᴀᴛᴇʀ")) {
+                    return itemStr;
+                }
+            }
+        } catch (Exception ignored) {}
+        return null;
+    }
 
-            for (Component message : messages) {
-                if (message != null) {
-                    String text = message.getString();
-                    if (text != null && !processedMessages.contains(text)) {
-                        processedMessages.add(text);
-                        processMessage(text, "COMPONENT-REFLECTION");
+    // ПРАВИЛЬНОЕ ИЗВЛЕЧЕНИЕ ТЕКСТА ИЗ COMPONENT
+    private static String extractFullTextFromComponent(Component component) {
+        try {
+            StringBuilder fullText = new StringBuilder();
+
+            // Получаем основной текст
+            String mainText = component.getString();
+            if (mainText != null && !mainText.trim().isEmpty() && !mainText.equals("empty")) {
+                fullText.append(mainText);
+            }
+
+            // Получаем siblings
+            List<Component> siblings = component.getSiblings();
+            if (siblings != null && !siblings.isEmpty()) {
+                for (Component sibling : siblings) {
+                    String siblingText = sibling.getString();
+                    if (siblingText != null && !siblingText.trim().isEmpty()) {
+                        fullText.append(siblingText);
                     }
                 }
             }
-        } catch (Exception e) {
-            // Игнорируем ошибки cast
-        }
-    }
 
-    private static void checkOtherField(Object chatComponent, Field field) {
-        try {
-            Object value = field.get(chatComponent);
-            if (value instanceof List) {
-                List<?> list = (List<?>) value;
-                for (Object item : list) {
-                    if (item != null) {
-                        String text = item.toString();
-                        if (text.length() > 10 && !processedMessages.contains(text)) {
-                            processedMessages.add(text);
-                            processMessage(text, "OTHER-REFLECTION");
-                        }
+            String result = fullText.toString().trim();
+
+            // Если все еще пусто, используем toString
+            if (result.isEmpty()) {
+                String fallback = component.toString();
+                // Извлекаем текст из toString формата
+                if (fallback.contains("literal{") && fallback.contains("}")) {
+                    StringBuilder extracted = new StringBuilder();
+                    Pattern literalPattern = Pattern.compile("literal\\{([^}]+)\\}");
+                    Matcher matcher = literalPattern.matcher(fallback);
+                    while (matcher.find()) {
+                        extracted.append(matcher.group(1));
                     }
+                    result = extracted.toString();
                 }
             }
+
+            return result;
+
         } catch (Exception e) {
-            // Игнорируем ошибки
-        }
-    }
-
-    private static void checkGuiChat(Gui gui) {
-        try {
-            // Простая проверка - получаем текущий размер чата
-            ChatComponent chat = gui.getChat();
-            if (chat == null) return;
-
-            // Используем toString() для получения содержимого
-            String chatContent = chat.toString();
-            if (chatContent != null && chatContent.length() > lastChatSize) {
-                lastChatSize = chatContent.length();
-
-                // Ищем новый контент
-                String[] lines = chatContent.split("\\n");
-                for (String line : lines) {
-                    if (line.trim().length() > 10 && !processedMessages.contains(line)) {
-                        processedMessages.add(line);
-                        processMessage(line, "TOSTRING");
-                    }
-                }
-            }
-        } catch (Exception e) {
-            // Игнорируем ошибки
+            return component.toString();
         }
     }
 
     private static void processMessage(String text, String source) {
         if (text == null || text.trim().isEmpty()) return;
 
-        // Очищаем от форматирования
         String cleanText = stripFormatting(text);
 
-        // Детальное логирование
-        Scs.LOGGER.info("[ScS-{}] Processing: '{}'", source, text);
-        if (!text.equals(cleanText)) {
-            Scs.LOGGER.info("[ScS-{}] Cleaned: '{}'", source, cleanText);
+        // ТОЛЬКО ВАЖНЫЕ ЛОГИ
+        if (text.contains("Анти-Чит") || text.contains("tried to") || text.contains("suspected") ||
+                text.contains("Проверка") || text.contains("игрок") || text.contains("режим") ||
+                text.contains("ᴄʜᴇᴀᴛᴇʀ")) {
+            Scs.LOGGER.info("[ScS-{}] Processing: '{}'", source, cleanText);
         }
 
-        // Логируем в файл
         if (Config.logAllChat) {
-            logMessage(source, text);
-            if (!text.equals(cleanText)) {
-                logMessage(source + "-CLEAN", cleanText);
-            }
+            logMessage(source, cleanText);
         }
 
-        // Проверяем оба варианта
-        checkPatterns(text, source);
+        checkMessage(text, source);
         if (!text.equals(cleanText)) {
-            checkPatterns(cleanText, source);
+            checkMessage(cleanText, source);
         }
     }
 
-    private static void checkPatterns(String text, String source) {
-        // Проверки
+    private static void checkMessage(String text, String source) {
+        // Проверки на проверки
         for (Pattern pattern : CHECK_PATTERNS) {
             if (pattern.matcher(text).matches()) {
                 addEntry(new Entry("CHECK", "Проверка начата"));
-                Scs.LOGGER.info("[ScS-{}] Check started detected", source);
+                Scs.LOGGER.info("[ScS] ✓ CHECK START detected");
                 return;
             }
         }
 
-        // Игроки
+        // Проверки на игроков
         for (Pattern pattern : PLAYER_PATTERNS) {
             Matcher m = pattern.matcher(text);
             if (m.find() && m.groupCount() >= 1) {
                 String player = m.group(1);
                 if (isValidPlayerName(player)) {
                     addEntry(new Entry("CHECK", "Проверяемый: " + player, player));
-                    Scs.LOGGER.info("[ScS-{}] Player detected: {}", source, player);
+                    Scs.LOGGER.info("[ScS] ✓ PLAYER detected: {}", player);
                     return;
                 }
             }
         }
 
-        // Режимы
+        // Проверки на режим
         for (Pattern pattern : MODE_PATTERNS) {
             Matcher m = pattern.matcher(text);
             if (m.find() && m.groupCount() >= 1) {
                 String mode = m.group(1).trim();
                 if (!mode.isEmpty()) {
                     addEntry(new Entry("CHECK", "Режим: " + mode));
-                    Scs.LOGGER.info("[ScS-{}] Mode detected: {}", source, mode);
+                    Scs.LOGGER.info("[ScS] ✓ MODE detected: {}", mode);
                     return;
                 }
             }
         }
 
-        // Античит
+        // Проверки на чат игроков
+        for (Pattern pattern : PLAYER_CHAT_PATTERNS) {
+            Matcher m = pattern.matcher(text);
+            if (m.find() && m.groupCount() >= 2) {
+                String player = m.group(1);
+                String message = m.group(2);
+
+                if (isValidPlayerName(player) && message != null && message.trim().length() > 0) {
+                    PlayerChatEntry chatEntry = new PlayerChatEntry(player.trim(), message.trim());
+                    PLAYER_CHAT.addFirst(chatEntry);
+                    while (PLAYER_CHAT.size() > 50) PLAYER_CHAT.removeLast();
+
+                    Scs.LOGGER.info("[ScS] ✓ CHAT: {} -> {}", player, message);
+
+                    // Логируем в файл
+                    if (Config.logAllChat) {
+                        logMessage("CHAT", player + ": " + message);
+                    }
+                    return;
+                }
+            }
+        }
+
+        // АНТИЧИТ - ГЛАВНОЕ
         for (int i = 0; i < ANTICHEAT_PATTERNS.length; i++) {
             Pattern pattern = ANTICHEAT_PATTERNS[i];
             Matcher m = pattern.matcher(text);
@@ -438,50 +435,69 @@ public final class ChatTap {
                     } catch (Exception ignored) {}
                 }
 
-                if (player != null && violation != null && isValidPlayerName(player.trim())) {
-                    ViolationEntry entry = new ViolationEntry(player.trim(), violation.trim(), type, count);
-                    VIOLATIONS.addFirst(entry);
-                    while (VIOLATIONS.size() > 50) VIOLATIONS.removeLast();
-
-                    addEntry(new Entry("VIOLATION", entry.text, entry.playerName));
-                    Scs.LOGGER.info("[ScS-{}] Violation detected: {} - {}", source, player, violation);
-
-                    // Звук и кнопки
-                    if (Config.soundAlerts && entry.isSerious) playSound();
-                    if (Config.enableChatButtons) addButtonsToChat(player.trim());
+                // УЛУЧШЕННАЯ ВАЛИДАЦИЯ
+                if (isValidPlayerName(player) && violation != null && violation.trim().length() >= 3) {
+                    processViolation(player.trim(), violation.trim(), type, count, source);
+                    Scs.LOGGER.info("[ScS] *** VIOLATION *** Player: '{}', Violation: '{}'", player, violation);
                     return;
                 }
             }
         }
 
-        // Fallback поиск
-        performFallbackSearch(text, source);
+        // Fallback
+        if (containsAntiCheatKeywords(text)) {
+            performFallbackAntiCheatSearch(text, source);
+        }
     }
 
-    private static void performFallbackSearch(String text, String source) {
-        String lowerText = text.toLowerCase();
-        if (!((lowerText.contains("анти") && lowerText.contains("чит")) ||
-                lowerText.contains("tried to") || lowerText.contains("might be") ||
-                lowerText.contains("is using"))) {
-            return;
+    private static void processViolation(String player, String violation, String type, int count, String source) {
+        ViolationEntry entry = new ViolationEntry(player, violation, type, count);
+        VIOLATIONS.addFirst(entry);
+        while (VIOLATIONS.size() > 50) VIOLATIONS.removeLast();
+
+        addEntry(new Entry("VIOLATION", entry.text, entry.playerName));
+
+        // ЧИСТЫЙ ЛОГ О НАРУШЕНИИ
+        Scs.LOGGER.info("[ScS] VIOLATION: {} - {} ({})", player, violation, entry.isSerious ? "СЕРЬЕЗНОЕ" : "обычное");
+
+        if (Config.soundAlerts && entry.isSerious) {
+            playSound();
         }
 
-        String[] words = text.split("\\s+");
-        for (String word : words) {
-            String cleanWord = word.replaceAll("[^a-zA-Z0-9_]", "");
-            if (isValidPlayerName(cleanWord) && !isSystemWord(cleanWord)) {
-                String rest = text.substring(text.indexOf(word) + word.length()).trim();
-                if (!rest.isEmpty()) {
-                    ViolationEntry entry = new ViolationEntry(cleanWord, rest, null, 0);
-                    VIOLATIONS.addFirst(entry);
-                    while (VIOLATIONS.size() > 50) VIOLATIONS.removeLast();
+        if (Config.enableChatButtons) {
+            addButtonsToChat(player); // Используем правильное имя игрока
+        }
+    }
 
-                    addEntry(new Entry("VIOLATION", entry.text, entry.playerName));
-                    Scs.LOGGER.info("[ScS-{}] Fallback detection: {} - {}", source, cleanWord, rest);
+    private static void performFallbackAntiCheatSearch(String text, String source) {
+        // УЛУЧШЕННЫЙ FALLBACK - ищем имена игроков точнее
+        String[] words = text.split("\\s+");
+        for (int i = 0; i < words.length; i++) {
+            String word = words[i];
+            String cleanWord = word.replaceAll("[^a-zA-Z0-9_]", "");
+
+            if (isValidPlayerName(cleanWord) && !isSystemWord(cleanWord)) {
+                // Берем все слова после имени игрока
+                StringBuilder violation = new StringBuilder();
+                for (int j = i + 1; j < words.length; j++) {
+                    violation.append(words[j]).append(" ");
+                }
+
+                String violationStr = violation.toString().trim();
+                if (violationStr.length() > 5) {
+                    processViolation(cleanWord, violationStr, null, 0, source + "-FALLBACK");
+                    Scs.LOGGER.info("[ScS] FALLBACK: {} - {}", cleanWord, violationStr);
                     return;
                 }
             }
         }
+    }
+
+    private static boolean containsAntiCheatKeywords(String text) {
+        String lowerText = text.toLowerCase();
+        return (lowerText.contains("анти") && lowerText.contains("чит")) ||
+                lowerText.contains("tried to") || lowerText.contains("suspected") ||
+                lowerText.contains("move abnormally") || lowerText.contains("vehicle cheat");
     }
 
     private static boolean isValidPlayerName(String name) {
@@ -491,15 +507,14 @@ public final class ChatTap {
 
     private static boolean isSystemWord(String word) {
         String lowerWord = word.toLowerCase();
-        return lowerWord.matches(".*(анти|чит|anti|cheat|tried|might|using|system).*");
+        return lowerWord.matches(".*(анти|чит|anti|cheat|tried|suspected|system|render|thread|literal|style|color).*");
     }
 
     private static String stripFormatting(String text) {
         if (text == null) return "";
-        String result = text.replaceAll("§[0-9a-fk-or]", "");
-        result = result.replaceAll("[\u00A7\u001B]\\[[0-9;]*[a-zA-Z]", "");
-        result = result.replaceAll("\\s+", " ").trim();
-        return result;
+        return text.replaceAll("§[0-9a-fk-or]", "")
+                .replaceAll("[\u00A7\u001B]\\[[0-9;]*[a-zA-Z]", "")
+                .replaceAll("\\s+", " ").trim();
     }
 
     private static void addEntry(Entry entry) {
@@ -513,32 +528,36 @@ public final class ChatTap {
         }
     }
 
+    // ИСПРАВЛЕННЫЕ КНОПКИ
     private static void addButtonsToChat(String player) {
         try {
             Minecraft mc = Minecraft.getInstance();
             if (mc.gui == null || mc.gui.getChat() == null) return;
 
-            MutableComponent checkBtn = Component.literal(" [Проверить]")
-                    .setStyle(Style.EMPTY
-                            .withColor(ChatFormatting.GREEN)
-                            .withClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/freezing " + player))
-                            .withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT,
-                                    Component.literal("Проверить " + player)))
-                    );
+            // ЧИСТЫЙ ЛОГ
+            Scs.LOGGER.info("[ScS] Adding buttons for player: '{}'", player);
 
-            MutableComponent specBtn = Component.literal(" [Спек]")
-                    .setStyle(Style.EMPTY
-                            .withColor(ChatFormatting.YELLOW)
-                            .withClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/matrix spectate " + player))
-                            .withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT,
-                                    Component.literal("Наблюдать за " + player)))
-                    );
+            MutableComponent message = Component.literal("Нарушение: " + player + " ")
+                    .append(Component.literal("[Проверить]")
+                            .setStyle(Style.EMPTY
+                                    .withColor(ChatFormatting.GREEN)
+                                    .withClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/freezing " + player))
+                                    .withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT,
+                                            Component.literal("Проверить " + player)))
+                            ))
+                    .append(Component.literal(" [Спек]")
+                            .setStyle(Style.EMPTY
+                                    .withColor(ChatFormatting.YELLOW)
+                                    .withClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/matrix spectate " + player))
+                                    .withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT,
+                                            Component.literal("Наблюдать за " + player)))
+                            ));
 
-            Component message = Component.literal("").append(checkBtn).append(specBtn);
             mc.gui.getChat().addMessage(message);
+            Scs.LOGGER.info("[ScS] ✓ Buttons added for: {}", player);
 
         } catch (Exception e) {
-            Scs.LOGGER.error("[ScS-BUTTONS] Error: {}", e.getMessage());
+            Scs.LOGGER.error("[ScS] Error adding buttons: {}", e.getMessage());
         }
     }
 
@@ -552,9 +571,7 @@ public final class ChatTap {
                         0.5f, 1.0f, false
                 );
             }
-        } catch (Exception e) {
-            Scs.LOGGER.warn("[ScS-SOUND] Error: {}", e.getMessage());
-        }
+        } catch (Exception ignored) {}
     }
 
     private static void logMessage(String type, String message) {
@@ -568,16 +585,15 @@ public final class ChatTap {
 
             Files.write(LOG_FILE, logEntry.getBytes(StandardCharsets.UTF_8),
                     StandardOpenOption.CREATE, StandardOpenOption.APPEND);
-        } catch (IOException e) {
-            Scs.LOGGER.error("[ScS-LOG] Error: {}", e.getMessage());
-        }
+        } catch (IOException ignored) {}
     }
 
     public static void clearEntries() {
         ENTRIES.clear();
         VIOLATIONS.clear();
+        PLAYER_CHAT.clear();
         processedMessages.clear();
-        Scs.LOGGER.info("[ScS] Entries cleared");
+        Scs.LOGGER.info("[ScS] All entries cleared (including player chat)");
     }
 
     public static int getViolationCount(String playerName) {
