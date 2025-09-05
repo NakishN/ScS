@@ -9,8 +9,8 @@ import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
 import org.lwjgl.glfw.GLFW;
 import com.scs.Scs;
-import com.scs.Config;
 
+@Mod.EventBusSubscriber(modid = Scs.MODID, value = Dist.CLIENT, bus = Mod.EventBusSubscriber.Bus.FORGE)
 public class KeyBindings {
 
     public static final KeyMapping TOGGLE_HUD = new KeyMapping(
@@ -44,52 +44,44 @@ public class KeyBindings {
             "key.categories.scs.shaurma"
     );
 
-    // Этот метод для регистрации клавиш на MOD_EVENT_BUS
-    @Mod.EventBusSubscriber(modid = Scs.MODID, value = Dist.CLIENT, bus = Mod.EventBusSubscriber.Bus.MOD)
-    public static class ModEvents {
-        @SubscribeEvent
-        public static void onRegisterKeyMappings(RegisterKeyMappingsEvent event) {
-            event.register(TOGGLE_HUD);
-            event.register(SHOW_HISTORY);
-            event.register(CLEAR_ENTRIES);
-            event.register(SHAURMA_TAP);
-            event.register(SHAURMA_MENU);
-        }
+    @SubscribeEvent
+    public static void onRegisterKeyMappings(RegisterKeyMappingsEvent event) {
+        event.register(TOGGLE_HUD);
+        event.register(SHOW_HISTORY);
+        event.register(CLEAR_ENTRIES);
+        event.register(SHAURMA_TAP);
+        event.register(SHAURMA_MENU);
     }
 
-    // Этот метод для обработки нажатий на FORGE_EVENT_BUS
-    @Mod.EventBusSubscriber(modid = Scs.MODID, value = Dist.CLIENT, bus = Mod.EventBusSubscriber.Bus.FORGE)
-    public static class ForgeEvents {
-        @SubscribeEvent
-        public static void onKeyInput(InputEvent.Key event) {
-            Minecraft mc = Minecraft.getInstance();
+    @SubscribeEvent
+    public static void onKeyInput(InputEvent.Key event) {
+        Minecraft mc = Minecraft.getInstance();
 
-            // Существующие клавиши
-            if (TOGGLE_HUD.consumeClick()) {
-                HudOverlay.toggleHud();
+        // Существующие клавиши
+        if (TOGGLE_HUD.consumeClick()) {
+            HudOverlay.toggleHud();
+        }
+
+        if (SHOW_HISTORY.consumeClick()) {
+            mc.setScreen(new ChatHistoryScreen());
+        }
+
+        if (CLEAR_ENTRIES.consumeClick()) {
+            ChatTap.clearEntries();
+            mc.gui.getChat().addMessage(net.minecraft.network.chat.Component.literal(
+                    "§e[ScS] История очищена!"));
+        }
+
+        // Новые клавиши для шаурмы (только если система включена)
+        if (com.scs.Config.enableShaurma) {
+            if (SHAURMA_TAP.consumeClick()) {
+                // Тап шаурмы - работает везде, даже в игре
+                ShaurmaSystem.onShaurmaTap();
             }
 
-            if (SHOW_HISTORY.consumeClick()) {
-                mc.setScreen(new ChatHistoryScreen());
-            }
-
-            if (CLEAR_ENTRIES.consumeClick()) {
-                ChatTap.clearEntries();
-                mc.gui.getChat().addMessage(net.minecraft.network.chat.Component.literal(
-                        "§e[ScS] История очищена!"));
-            }
-
-            // Новые клавиши для шаурмы (только если система включена)
-            if (Config.enableShaurma) {
-                if (SHAURMA_TAP.consumeClick()) {
-                    // Тап шаурмы - работает везде, даже в игре
-                    ShaurmaSystem.onShaurmaTap();
-                }
-
-                if (SHAURMA_MENU.consumeClick()) {
-                    // Открыть меню шаурмы
-                    mc.setScreen(new ShaurmaMenuScreen());
-                }
+            if (SHAURMA_MENU.consumeClick()) {
+                // Открыть меню шаурмы
+                mc.setScreen(new ShaurmaMenuScreen());
             }
         }
     }

@@ -18,6 +18,7 @@ import java.util.List;
 public class ChatHistoryScreen extends Screen {
     private final List<ChatTap.Entry> allEntries;
     private final List<ChatTap.ViolationEntry> violations;
+    private final List<ChatTap.DupeIPEntry> dupeIPResults;
     private EntryList entryList;
     private Button filterButton;
     private FilterMode currentFilter = FilterMode.ALL;
@@ -27,7 +28,8 @@ public class ChatHistoryScreen extends Screen {
         ALL("Все"),
         VIOLATIONS_ONLY("Только нарушения"),
         CHECKS_ONLY("Только проверки"),
-        SERIOUS_ONLY("Серьезные");
+        SERIOUS_ONLY("Серьезные"),
+        DUPEIP_ONLY("DupeIP результаты");
 
         private final String displayName;
 
@@ -41,9 +43,10 @@ public class ChatHistoryScreen extends Screen {
     }
 
     public ChatHistoryScreen() {
-        super(Component.literal("ScS - История чата и нарушений"));
+        super(Component.literal("ScS - История чата, нарушений и DupeIP"));
         this.allEntries = new ArrayList<>(ChatTap.ENTRIES);
         this.violations = new ArrayList<>(ChatTap.VIOLATIONS);
+        this.dupeIPResults = new ArrayList<>(ChatTap.getDupeIPResults());
     }
 
     @Override
@@ -56,9 +59,9 @@ public class ChatHistoryScreen extends Screen {
         this.addWidget(this.entryList);
 
         // Кнопки
-        int buttonWidth = 100;
-        int buttonSpacing = 110;
-        int startX = (this.width - (buttonSpacing * 4 - 10)) / 2;
+        int buttonWidth = 90;
+        int buttonSpacing = 100;
+        int startX = (this.width - (buttonSpacing * 5 - 10)) / 2;
 
         // Кнопка фильтра
         this.filterButton = this.addRenderableWidget(Button.builder(
@@ -71,11 +74,18 @@ public class ChatHistoryScreen extends Screen {
                 .bounds(startX, this.height - 56, buttonWidth, 20)
                 .build());
 
+        // Кнопка DupeIP статистики
+        this.addRenderableWidget(Button.builder(
+                        Component.literal("DupeIP стата"),
+                        button -> showDupeIPStats())
+                .bounds(startX + buttonSpacing, this.height - 56, buttonWidth, 20)
+                .build());
+
         // Кнопка экспорта
         this.addRenderableWidget(Button.builder(
                         Component.literal("Экспорт"),
                         button -> exportToFile())
-                .bounds(startX + buttonSpacing, this.height - 56, buttonWidth, 20)
+                .bounds(startX + buttonSpacing * 2, this.height - 56, buttonWidth, 20)
                 .build());
 
         // Кнопка очистки
@@ -85,15 +95,16 @@ public class ChatHistoryScreen extends Screen {
                             ChatTap.clearEntries();
                             this.allEntries.clear();
                             this.violations.clear();
+                            this.dupeIPResults.clear();
                             updateEntryList();
                         })
-                .bounds(startX + buttonSpacing * 2, this.height - 56, buttonWidth, 20)
+                .bounds(startX + buttonSpacing * 3, this.height - 56, buttonWidth, 20)
                 .build());
 
         // Кнопка закрытия
         this.addRenderableWidget(Button.builder(CommonComponents.GUI_DONE,
                         button -> this.onClose())
-                .bounds(startX + buttonSpacing * 3, this.height - 56, buttonWidth, 20)
+                .bounds(startX + buttonSpacing * 4, this.height - 56, buttonWidth, 20)
                 .build());
     }
 
@@ -126,7 +137,37 @@ public class ChatHistoryScreen extends Screen {
                         return false;
                     })
                     .toList();
+            case DUPEIP_ONLY -> allEntries.stream()
+                    .filter(e -> e.kind.startsWith("DUPEIP"))
+                    .toList();
         };
+    }
+
+    private void showDupeIPStats() {
+        if (dupeIPResults.isEmpty()) {
+            Minecraft.getInstance().gui.getChat().addMessage(
+                    Component.literal("§e[ScS] Нет данных DupeIP для отображения")
+            );
+            return;
+        }
+
+        StringBuilder stats = new StringBuilder();
+        stats.append("§6=== DupeIP Статистика ===\n");
+        stats.append(String.format("§7Всего сканов: %d\n", dupeIPResults.size()));
+
+        int totalDupes = dupeIPResults.stream().mapToInt(d -> d.totalDupes).sum();
+        stats.append(String.format("§7Всего дубликатов найдено: %d\n", totalDupes));
+
+        // Топ 5 игроков с наибольшим количеством дубликатов
+        dupeIPResults.stream()
+                .sorted((a, b) -> Integer.compare(b.totalDupes, a.totalDupes))
+                .limit(5)
+                .forEach(entry -> {
+                    stats.append(String.format("§c%s: %d дубликатов\n",
+                            entry.scannedPlayer, entry.totalDupes));
+                });
+
+        Minecraft.getInstance().gui.getChat().addMessage(Component.literal(stats.toString()));
     }
 
     private void exportToFile() {
@@ -146,9 +187,9 @@ public class ChatHistoryScreen extends Screen {
         guiGraphics.drawCenteredString(this.font, this.title, this.width / 2, 16, 0xFFFFFF);
 
         // Статистика
-        String stats = String.format("Всего записей: %d | Нарушений: %d | Серьезных: %d",
-                allEntries.size(), violations.size(),
-                violations.stream().mapToInt(v -> v.isSerious ? 1 : 0).sum());
+        long seriousCount = violations.stream().mapToLong(v -> v.isSerious ? 1 : 0).sum();
+        String stats = String.format("Всего записей: %d | Нарушений: %d | Серьезных: %d | DupeIP: %d",
+                allEntries.size(), violations.size(), seriousCount, dupeIPResults.size());
         guiGraphics.drawCenteredString(this.font, stats, this.width / 2, this.height - 80, 0xCCCCCC);
 
         super.render(guiGraphics, mouseX, mouseY, partialTick);
@@ -187,6 +228,8 @@ public class ChatHistoryScreen extends Screen {
             // Определяем цвет записи
             int color = switch (entry.kind) {
                 case "CHECK" -> Config.parseColor(Config.checkColor, 0x00FF7F);
+                case "DUPEIP_SCAN" -> 0x00AAFF;
+                case "DUPEIP_RESULT" -> 0x0099DD;
                 case "AC", "VIOLATION" -> {
                     boolean isSerious = false;
                     for (ChatTap.ViolationEntry violation : ChatHistoryScreen.this.violations) {
@@ -200,8 +243,10 @@ public class ChatHistoryScreen extends Screen {
                 default -> 0xCCCCCC;
             };
 
-            // Подсвечиваем фон для серьезных нарушений
+            // Подсвечиваем фон для серьезных нарушений и DupeIP
             boolean isSerious = false;
+            boolean isDupeIP = entry.kind.startsWith("DUPEIP");
+
             for (ChatTap.ViolationEntry violation : ChatHistoryScreen.this.violations) {
                 if (violation.playerName != null && violation.playerName.equals(entry.playerName) && violation.isSerious) {
                     isSerious = true;
@@ -211,6 +256,8 @@ public class ChatHistoryScreen extends Screen {
 
             if (isSerious) {
                 guiGraphics.fill(left, top, left + width, top + height, 0x44FF0000);
+            } else if (isDupeIP) {
+                guiGraphics.fill(left, top, left + width, top + height, 0x440099FF);
             } else if (isMouseOver) {
                 guiGraphics.fill(left, top, left + width, top + height, 0x44FFFFFF);
             }
@@ -224,6 +271,16 @@ public class ChatHistoryScreen extends Screen {
             if (entry.playerName != null) {
                 displayText += String.format(" (Игрок: %s)", entry.playerName);
             }
+
+            // Добавляем индикатор типа
+            String typeIndicator = switch (entry.kind) {
+                case "CHECK" -> "✓ ";
+                case "DUPEIP_SCAN" -> "🔍 ";
+                case "DUPEIP_RESULT" -> "👥 ";
+                case "VIOLATION", "AC" -> "⚠ ";
+                default -> "";
+            };
+            displayText = typeIndicator + displayText;
 
             // Рисуем текст с переносом если нужно
             List<String> lines = wrapText(displayText, width - 8);
