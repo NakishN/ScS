@@ -7,10 +7,12 @@ import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.fml.DistExecutor;
 import net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext;
+import net.minecraftforge.fml.event.lifecycle.FMLClientSetupEvent;
+import net.minecraftforge.eventbus.api.SubscribeEvent;
 import com.scs.client.ChatTap;
 import com.scs.client.HudOverlay;
-import com.scs.client.KeyBindings;
 import com.scs.client.ChatButtonHandler;
+import com.scs.client.ShaurmaSystem;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -23,18 +25,28 @@ public final class Scs {
         // Регистрируем конфиг
         ModLoadingContext.get().registerConfig(ModConfig.Type.CLIENT, Config.SPEC);
 
+        // Регистрируем на MOD bus для инициализации
+        FMLJavaModLoadingContext.get().getModEventBus().addListener(this::onClientSetup);
+
         // Только на клиенте
         DistExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () -> {
-            // Регистрируем универсальный перехватчик чата
+            // Регистрируем обработчики событий на FORGE EVENT BUS
             MinecraftForge.EVENT_BUS.register(new ChatTap());
             MinecraftForge.EVENT_BUS.register(new HudOverlay());
             MinecraftForge.EVENT_BUS.register(new ChatButtonHandler());
-            // KeyInputHandler автоматически регистрируется через аннотацию
 
-            // Регистрируем обработчики для mod event bus (регистрация клавиш)
-            FMLJavaModLoadingContext.get().getModEventBus().register(KeyBindings.class);
+            // KeyBindings регистрируется сам через аннотации
 
-            LOGGER.info("ScS mod initialized successfully with universal chat interceptor!");
+            LOGGER.info("ScS mod initialized successfully!");
+        });
+    }
+
+    @SubscribeEvent
+    public void onClientSetup(FMLClientSetupEvent event) {
+        // Инициализируем систему шаурмы при загрузке клиента
+        event.enqueueWork(() -> {
+            ShaurmaSystem.loadShaurmaData();
+            LOGGER.info("Shaurma system initialized!");
         });
     }
 }

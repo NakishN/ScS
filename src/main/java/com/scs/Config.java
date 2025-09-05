@@ -73,6 +73,32 @@ public class Config {
             .comment("Логировать все сообщения чата")
             .define("logAllChat", false);
 
+    // Настройки системы шаурмы
+    public static final ForgeConfigSpec.BooleanValue ENABLE_SHAURMA = BUILDER
+            .comment("=== Настройки системы шаурмы ===")
+            .comment("Включить систему шаурмы")
+            .define("enableShaurma", true);
+
+    public static final ForgeConfigSpec.BooleanValue SHAURMA_HUD = BUILDER
+            .comment("Показывать панель шаурмы в HUD")
+            .define("shaurmaHud", true);
+
+    public static final ForgeConfigSpec.BooleanValue SHAURMA_SOUNDS = BUILDER
+            .comment("Включить звуки для системы шаурмы")
+            .define("shaurmaSounds", true);
+
+    public static final ForgeConfigSpec.IntValue SHAURMA_BONUS_CHANCE = BUILDER
+            .comment("Шанс бонуса при тапе (в процентах)")
+            .defineInRange("shaurmaBonusChance", 15, 1, 100);
+
+    public static final ForgeConfigSpec.IntValue SHAURMA_BASE_REWARD = BUILDER
+            .comment("Базовая награда за тап")
+            .defineInRange("shaurmaBaseReward", 1, 1, 100);
+
+    public static final ForgeConfigSpec.BooleanValue SHAURMA_CHAT_MESSAGES = BUILDER
+            .comment("Показывать сообщения шаурмы в чате")
+            .define("shaurmaChatMessages", true);
+
     // Фильтры и паттерны
     public static final ForgeConfigSpec.ConfigValue<List<? extends String>> VIOLATION_KEYWORDS = BUILDER
             .comment("Ключевые слова для определения нарушений")
@@ -87,22 +113,11 @@ public class Config {
                     "fly hacks"
             ), o -> o instanceof String);
 
-    public static final ForgeConfigSpec.BooleanValue DEBUG_MODE = BUILDER
-            .comment("Включить отладочные сообщения в логи")
-            .define("debugMode", true);
-
-    public static final ForgeConfigSpec.BooleanValue LOG_RAW_MESSAGES = BUILDER
-            .comment("Логировать сырые сообщения чата для отладки")
-            .define("logRawMessages", true);
-
-
     static final ForgeConfigSpec SPEC = BUILDER.build();
 
     // Статические поля для быстрого доступа
     public static boolean enableHud;
     public static int maxMessages;
-    public static boolean debugMode;
-    public static boolean logRawMessages;
     public static int showLast;
     public static int hudX;
     public static int hudY;
@@ -116,6 +131,14 @@ public class Config {
     public static boolean enableLogging;
     public static boolean logAllChat;
     public static List<? extends String> violationKeywords;
+
+    // Поля для шаурмы
+    public static boolean enableShaurma;
+    public static boolean shaurmaHud;
+    public static boolean shaurmaSounds;
+    public static int shaurmaBonusChance;
+    public static int shaurmaBaseReward;
+    public static boolean shaurmaChatMessages;
 
     @SubscribeEvent
     static void onLoad(final ModConfigEvent event) {
@@ -134,8 +157,14 @@ public class Config {
         enableLogging = ENABLE_LOGGING.get();
         logAllChat = LOG_ALL_CHAT.get();
         violationKeywords = VIOLATION_KEYWORDS.get();
-        debugMode = DEBUG_MODE.get();
-        logRawMessages = LOG_RAW_MESSAGES.get();
+
+        // Загружаем настройки шаурмы
+        enableShaurma = ENABLE_SHAURMA.get();
+        shaurmaHud = SHAURMA_HUD.get();
+        shaurmaSounds = SHAURMA_SOUNDS.get();
+        shaurmaBonusChance = SHAURMA_BONUS_CHANCE.get();
+        shaurmaBaseReward = SHAURMA_BASE_REWARD.get();
+        shaurmaChatMessages = SHAURMA_CHAT_MESSAGES.get();
 
         Scs.LOGGER.info("ScS Config loaded successfully!");
     }
