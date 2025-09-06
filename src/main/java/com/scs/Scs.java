@@ -12,6 +12,7 @@ import net.minecraftforge.eventbus.api.SubscribeEvent;
 import com.scs.client.ChatTap;
 import com.scs.client.HudOverlay;
 import com.scs.client.ChatButtonHandler;
+import com.scs.client.MassCommandHandler;
 import com.scs.client.ShaurmaSystem;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -28,16 +29,14 @@ public final class Scs {
         // Регистрируем на MOD bus для инициализации
         FMLJavaModLoadingContext.get().getModEventBus().addListener(this::onClientSetup);
 
-        // Только на клиенте
+        // Только на клиенте - ТОЛЬКО НУЖНОЕ
         DistExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () -> {
-            // Регистрируем обработчики событий на FORGE EVENT BUS
+            // Регистрируем только ОСНОВНЫЕ обработчики
             MinecraftForge.EVENT_BUS.register(new ChatTap());
             MinecraftForge.EVENT_BUS.register(new HudOverlay());
             MinecraftForge.EVENT_BUS.register(new ChatButtonHandler());
 
-            // KeyBindings регистрируется сам через аннотации
-
-            LOGGER.info("ScS mod initialized successfully!");
+            LOGGER.info("ScS mod initialized - ПРОСТЫЕ КНОПКИ ГОТОВЫ!");
         });
     }
 

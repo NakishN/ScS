@@ -4,6 +4,8 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
 import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
+import net.minecraftforge.fml.common.Mod;
+import net.minecraftforge.api.distmarker.Dist;
 import com.scs.Config;
 import com.scs.Scs;
 
@@ -12,6 +14,7 @@ import java.util.List;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
+@Mod.EventBusSubscriber(modid = Scs.MODID, value = Dist.CLIENT, bus = Mod.EventBusSubscriber.Bus.FORGE)
 public class CommandScheduler {
 
     private static final Queue<ScheduledCommand> commandQueue = new ConcurrentLinkedQueue<>();
@@ -31,14 +34,14 @@ public class CommandScheduler {
     }
 
     @SubscribeEvent
-    public void onClientTick(TickEvent.ClientTickEvent event) {
+    public static void onClientTick(TickEvent.ClientTickEvent event) {
         if (event.phase != TickEvent.Phase.END) return;
 
         // Проверяем очередь команд каждый тик
         processCommandQueue();
     }
 
-    private void processCommandQueue() {
+    private static void processCommandQueue() {
         if (commandQueue.isEmpty()) return;
 
         long currentTime = System.currentTimeMillis();
@@ -53,12 +56,15 @@ public class CommandScheduler {
         }
     }
 
-    private void executeCommand(ScheduledCommand scheduledCommand) {
+    private static void executeCommand(ScheduledCommand scheduledCommand) {
         try {
             Minecraft mc = Minecraft.getInstance();
-            if (mc.player != null) {
+            if (mc.player != null && mc.player.connection != null) {
                 // Выполняем команду
-                mc.player.connection.sendCommand(scheduledCommand.command.substring(1)); // Убираем /
+                String cmdToExecute = scheduledCommand.command.startsWith("/") ?
+                        scheduledCommand.command.substring(1) : scheduledCommand.command;
+
+                mc.player.connection.sendCommand(cmdToExecute);
 
                 // Показываем что команда выполнена
                 mc.gui.getChat().addMessage(Component.literal(
@@ -83,7 +89,7 @@ public class CommandScheduler {
             if (mc.gui != null) {
                 int queueSize = commandQueue.size();
                 mc.gui.getChat().addMessage(Component.literal(
-                        "§e[ScS] Команда добавлена в очередь: " + description + " (в очереди: " + queueSize + ")"));
+                        "§e[ScS] В очереди: " + description + " (всего: " + queueSize + ")"));
             }
         } catch (Exception e) {
             Scs.LOGGER.error("[ScS] Error showing queue message: {}", e.getMessage());
@@ -109,7 +115,7 @@ public class CommandScheduler {
             if (mc.gui != null) {
                 mc.gui.getChat().addMessage(Component.literal(
                         "§6[ScS] Запланировано " + players.size() + " команд: " + actionDescription +
-                                " (задержка: " + (commandDelay / 1000.0) + "с между командами)"));
+                                " (задержка: " + (commandDelay / 1000.0) + "с)"));
             }
         } catch (Exception ignored) {}
     }
@@ -136,5 +142,26 @@ public class CommandScheduler {
     public static void setCommandDelay(int delayMs) {
         commandDelay = Math.max(500, delayMs); // Минимум 0.5 секунды
         Scs.LOGGER.info("[ScS] Command delay set to: {}ms", commandDelay);
+    }
+
+    public static String getQueueInfo() {
+        if (commandQueue.isEmpty()) {
+            return "Очередь команд пуста";
+        }
+
+        StringBuilder info = new StringBuilder();
+        info.append("В очереди ").append(commandQueue.size()).append(" команд:");
+
+        int count = 0;
+        for (ScheduledCommand cmd : commandQueue) {
+            if (count >= 3) {
+                info.append("\n  ... и еще ").append(commandQueue.size() - 3);
+                break;
+            }
+            info.append("\n  ").append(count + 1).append(". ").append(cmd.description);
+            count++;
+        }
+
+        return info.toString();
     }
 }

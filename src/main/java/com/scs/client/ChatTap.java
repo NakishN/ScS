@@ -55,6 +55,7 @@ public final class ChatTap {
 
     // Временное хранение для отслеживания последнего сканируемого игрока DupeIP
     private static String lastScannedPlayer = null;
+    private static long lastDupeIPScanTime = 0;
 
     // Улучшенные паттерны
     private static final Pattern[] ANTICHEAT_PATTERNS = {
@@ -88,15 +89,15 @@ public final class ChatTap {
             Pattern.compile(".*(\\w+)\\s*[»]\\s*(.+)", Pattern.CASE_INSENSITIVE),
     };
 
-    // ПАТТЕРНЫ ДЛЯ DUPEIP
+    // УЛУЧШЕННЫЕ ПАТТЕРНЫ ДЛЯ DUPEIP
     private static final Pattern DUPEIP_SCAN_PATTERN = Pattern.compile(
-            ".*Сканирование\\s+(\\S+)\\s*\\.\\s*\\[Онлайн\\]\\s*\\[Оффлайн\\]\\s*\\[Забанен\\].*",
-            Pattern.UNICODE_CASE
+            ".*Сканирование\\s+(\\w+).*",
+            Pattern.UNICODE_CASE | Pattern.DOTALL
     );
 
     // Паттерн для результатов дубликатов - строка с никнеймами через запятую
     private static final Pattern DUPEIP_RESULTS_PATTERN = Pattern.compile(
-            "^([A-Za-z0-9_]+(?:,\\s*[A-Za-z0-9_]+)*)$"
+            "^([A-Za-z0-9_]+(?:,\\s*[A-Za-z0-9_]+)+)$"
     );
 
     public static final class Entry {
@@ -183,7 +184,7 @@ public final class ChatTap {
         }
 
         public String getFormattedText() {
-            return String.format("DupeIP %s: %d аккаунтов (%s)",
+            return String.format("DupeIP %s: %d дубл (%s)",
                     scannedPlayer, totalDupes, String.join(", ", duplicateAccounts));
         }
     }
@@ -219,9 +220,97 @@ public final class ChatTap {
     public void onClientChatReceived(ClientChatReceivedEvent event) {
         try {
             if (event.getMessage() != null) {
-                processMessage(event.getMessage().getString(), "EVENT");
+                String messageText = event.getMessage().getString();
+                processMessage(messageText, "EVENT");
+
+                // ПРЯМАЯ ПРОВЕРКА НА DUPEIP В EVENT
+                checkForDupeIPDirect(messageText);
             }
         } catch (Exception ignored) {}
+    }
+
+    // СУПЕР УСИЛЕННАЯ ПРОВЕРКА DUPEIP - ВСЕ ВАРИАНТЫ
+    private static void checkForDupeIPDirect(String text) {
+        if (text == null || text.trim().isEmpty()) return;
+
+        Scs.LOGGER.info("[ScS] *** ПРЯМАЯ ПРОВЕРКА DUPEIP *** Текст: '{}'", text);
+
+        // ВАРИАНТ 1: Проверка на сканирование - ЛЮБОЕ УПОМИНАНИЕ
+        if (text.toLowerCase().contains("сканирование")) {
+            Scs.LOGGER.info("[ScS] *** НАЙДЕНО СКАНИРОВАНИЕ *** Ищем игрока...");
+
+            String[] words = text.split("\\s+");
+            for (int i = 0; i < words.length; i++) {
+                String word = words[i];
+                if (word.toLowerCase().contains("сканирование") && i + 1 < words.length) {
+                    String nextWord = words[i + 1];
+                    String playerName = nextWord.replaceAll("[^a-zA-Z0-9_]", "");
+
+                    if (isValidPlayerName(playerName)) {
+                        lastScannedPlayer = playerName;
+                        lastDupeIPScanTime = System.currentTimeMillis();
+                        addEntry(new Entry("DUPEIP_SCAN", "DupeIP скан: " + playerName, playerName));
+                        Scs.LOGGER.info("[ScS] ✓✓✓ DUPEIP СКАН НАЙДЕН: {}", playerName);
+                        return;
+                    }
+                }
+            }
+        }
+
+        // ВАРИАНТ 2: Проверка на результаты - ЕСЛИ ЕСТЬ ЗАПЯТЫЕ И НИКНЕЙМЫ
+        if (lastScannedPlayer != null &&
+                System.currentTimeMillis() - lastDupeIPScanTime < 15000) { // 15 секунд
+
+            Scs.LOGGER.info("[ScS] *** ИЩЕМ РЕЗУЛЬТАТЫ *** Последний скан: {} ({}сек назад)",
+                    lastScannedPlayer, (System.currentTimeMillis() - lastDupeIPScanTime) / 1000);
+
+            // Если в тексте есть запятые и это похоже на список игроков
+            if (text.contains(",")) {
+                String[] parts = text.split(",");
+                List<String> nicknames = new ArrayList<>();
+
+                for (String part : parts) {
+                    String cleanNick = part.trim().replaceAll("[^a-zA-Z0-9_]", "");
+                    if (isValidPlayerName(cleanNick)) {
+                        nicknames.add(cleanNick);
+                        Scs.LOGGER.info("[ScS] *** НАЙДЕН НИКНЕЙМ: '{}'", cleanNick);
+                    }
+                }
+
+                if (nicknames.size() >= 2) {
+                    DupeIPEntry dupeEntry = new DupeIPEntry(lastScannedPlayer, nicknames);
+                    DUPEIP_SCAN_RESULTS.addFirst(dupeEntry);
+                    while (DUPEIP_SCAN_RESULTS.size() > 20) {
+                        DUPEIP_SCAN_RESULTS.removeLast();
+                    }
+
+                    addEntry(new Entry("DUPEIP_RESULT", dupeEntry.getFormattedText(), lastScannedPlayer));
+
+                    Scs.LOGGER.info("[ScS] ✓✓✓ DUPEIP РЕЗУЛЬТАТЫ: {} -> {} аккаунтов", lastScannedPlayer, nicknames.size());
+
+                    // ДОБАВЛЯЕМ КНОПКИ СРАЗУ ЖЕ БЛЯТЬ!
+                    if (Config.enableChatButtons) {
+                        Scs.LOGGER.info("[ScS] *** ДОБАВЛЯЕМ КНОПКИ ПРЯМО СЕЙЧАС ***");
+                        addDupeIPButtonsToChat(lastScannedPlayer, nicknames);
+                    } else {
+                        Scs.LOGGER.warn("[ScS] *** КНОПКИ ОТКЛЮЧЕНЫ В КОНФИГЕ! ***");
+                    }
+
+                    lastScannedPlayer = null; // Сбрасываем
+                    return;
+                }
+            }
+        }
+
+        // ВАРИАНТ 3: ОТДЕЛЬНЫЕ НИКНЕЙМЫ В РАЗНЫХ СТРОКАХ (если плагин шлет по одному)
+        if (lastScannedPlayer != null &&
+                System.currentTimeMillis() - lastDupeIPScanTime < 10000 &&
+                !text.contains(",") &&
+                isValidPlayerName(text.trim())) {
+
+            // Возможно это отдельный результат
+            Scs.LOGGER.info("[ScS] *** ВОЗМОЖНО ОТДЕЛЬНЫЙ РЕЗУЛЬТАТ: '{}' для скана '{}'", text.trim(), lastScannedPlayer);
+        }
     }
 
     private static void installChatHook(ChatComponent chatComponent) {
@@ -286,11 +375,16 @@ public final class ChatTap {
                 if (text != null && text.length() > 5 && !processedMessages.contains(text)) {
                     processedMessages.add(text);
 
+                    // СПЕЦИАЛЬНАЯ ОТЛАДКА ДЛЯ DUPEIP
+                    if (text.contains("Сканирование") || text.contains("nakish")) {
+                        Scs.LOGGER.info("[ScS] *** DUPEIP FOUND *** Field: {}, Raw: {}", fieldName, item);
+                        Scs.LOGGER.info("[ScS] *** DUPEIP EXTRACTED *** Text: '{}'", text);
+                    }
+
                     // ЧИСТЫЕ ЛОГИ - только важное + DupeIP
-                    if (text.contains("Анти-Чит") || text.contains("tried to") || text.contains("suspected") ||
-                            text.contains("Проверка") || text.contains("игрок") || text.contains("режим") ||
-                            text.contains("ᴄʜᴇᴀᴛᴇʀ") || text.contains("Сканирование")) {
-                        Scs.LOGGER.info("[ScS-{}] Found: {}", fieldName, text);
+                    if (containsImportantKeywords(text)) {
+                        String shortText = text.length() > 100 ? text.substring(0, 100) + "..." : text;
+                        Scs.LOGGER.info("[ScS-{}] Found: {}", fieldName, shortText);
                         processMessage(text, "SCAN-" + fieldName.toUpperCase());
                     }
 
@@ -299,10 +393,25 @@ public final class ChatTap {
                     }
                 }
             }
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            Scs.LOGGER.error("[ScS] Error scanning list field {}: {}", fieldName, e.getMessage());
+        }
     }
 
-    // УЛУЧШЕННОЕ ИЗВЛЕЧЕНИЕ ТЕКСТА ИЗ ОБЪЕКТОВ
+    // НОВЫЙ метод для проверки важных ключевых слов
+    private static boolean containsImportantKeywords(String text) {
+        String lowerText = text.toLowerCase();
+        return lowerText.contains("сканирование") ||
+                lowerText.contains("анти") && lowerText.contains("чит") ||
+                lowerText.contains("tried to") ||
+                lowerText.contains("suspected") ||
+                lowerText.contains("проверка") ||
+                lowerText.contains("игрок") ||
+                lowerText.contains("режим") ||
+                lowerText.contains("ᴄʜᴇᴀᴛᴇʀ");
+    }
+
+    // ИСПРАВЛЕННЫЙ метод extractTextFromObject
     private static String extractTextFromObject(Object item) {
         try {
             if (item instanceof String) {
@@ -312,32 +421,63 @@ public final class ChatTap {
                 return extractFullTextFromComponent(comp);
             } else {
                 String itemStr = item.toString();
-                // Только если содержит ключевые слова + DupeIP
-                if (itemStr.contains("Анти-Чит") || itemStr.contains("tried to") ||
-                        itemStr.contains("suspected") || itemStr.contains("Move") ||
-                        itemStr.contains("Vehicle") || itemStr.contains("Combat") ||
-                        itemStr.contains("Проверка") || itemStr.contains("игрок") ||
-                        itemStr.contains("режим") || itemStr.contains("ᴄʜᴇᴀᴛᴇʀ") ||
-                        itemStr.contains("Сканирование")) {
+
+                // Проверяем наличие ключевых слов ПЕРЕД извлечением текста
+                if (containsImportantKeywords(itemStr)) {
+                    // Если это GuiMessage, извлекаем текст из структуры
+                    if (itemStr.startsWith("GuiMessage[") && itemStr.contains("content=")) {
+                        return parseGuiMessageContent(itemStr);
+                    }
                     return itemStr;
                 }
             }
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            Scs.LOGGER.error("[ScS] Error extracting text from object: {}", e.getMessage());
+        }
         return null;
     }
 
-    // ПРАВИЛЬНОЕ ИЗВЛЕЧЕНИЕ ТЕКСТА ИЗ COMPONENT
+    // НОВЫЙ метод для парсинга GuiMessage
+    private static String parseGuiMessageContent(String guiMessageStr) {
+        try {
+            // Ищем content= часть
+            int contentStart = guiMessageStr.indexOf("content=");
+            if (contentStart == -1) return "";
+
+            String contentPart = guiMessageStr.substring(contentStart);
+
+            // Извлекаем все literal{} блоки из content части
+            StringBuilder result = new StringBuilder();
+            Pattern literalPattern = Pattern.compile("literal\\{([^}]+)\\}");
+            Matcher matcher = literalPattern.matcher(contentPart);
+
+            while (matcher.find()) {
+                String literalText = matcher.group(1);
+                result.append(literalText);
+            }
+
+            String finalResult = result.toString().trim();
+            Scs.LOGGER.info("[ScS] Parsed GuiMessage content: '{}'", finalResult);
+            return finalResult;
+
+        } catch (Exception e) {
+            Scs.LOGGER.error("[ScS] Error parsing GuiMessage: {}", e.getMessage());
+            return "";
+        }
+    }
+
+    // ИСПРАВЛЕННЫЙ метод extractFullTextFromComponent
     private static String extractFullTextFromComponent(Component component) {
         try {
             StringBuilder fullText = new StringBuilder();
 
-            // Получаем основной текст
+            // Сначала проверяем основной текст
             String mainText = component.getString();
             if (mainText != null && !mainText.trim().isEmpty() && !mainText.equals("empty")) {
                 fullText.append(mainText);
             }
 
-            // Получаем siblings
+            // Получаем siblings - здесь основная проблема
             List<Component> siblings = component.getSiblings();
             if (siblings != null && !siblings.isEmpty()) {
                 for (Component sibling : siblings) {
@@ -350,25 +490,40 @@ public final class ChatTap {
 
             String result = fullText.toString().trim();
 
-            // Если все еще пусто, используем toString
-            if (result.isEmpty()) {
-                String fallback = component.toString();
-                // Извлекаем текст из toString формата
-                if (fallback.contains("literal{") && fallback.contains("}")) {
-                    StringBuilder extracted = new StringBuilder();
-                    Pattern literalPattern = Pattern.compile("literal\\{([^}]+)\\}");
-                    Matcher matcher = literalPattern.matcher(fallback);
-                    while (matcher.find()) {
-                        extracted.append(matcher.group(1));
-                    }
-                    result = extracted.toString();
-                }
+            // НОВОЕ: Если обычное извлечение не сработало, парсим toString()
+            if (result.isEmpty() || result.equals("empty")) {
+                result = parseFromToString(component.toString());
             }
 
             return result;
 
         } catch (Exception e) {
-            return component.toString();
+            Scs.LOGGER.error("[ScS] Error extracting text from component: {}", e.getMessage());
+            return parseFromToString(component.toString());
+        }
+    }
+
+    // НОВЫЙ метод для парсинга из toString()
+    private static String parseFromToString(String componentString) {
+        try {
+            StringBuilder result = new StringBuilder();
+
+            // Паттерн для извлечения literal{текст} блоков
+            Pattern literalPattern = Pattern.compile("literal\\{([^}]+)\\}");
+            Matcher matcher = literalPattern.matcher(componentString);
+
+            while (matcher.find()) {
+                String literalText = matcher.group(1);
+                // Убираем экранирование если есть
+                literalText = literalText.replace("\\{", "{").replace("\\}", "}");
+                result.append(literalText);
+            }
+
+            return result.toString().trim();
+
+        } catch (Exception e) {
+            Scs.LOGGER.error("[ScS] Error parsing from toString: {}", e.getMessage());
+            return "";
         }
     }
 
@@ -378,10 +533,9 @@ public final class ChatTap {
         String cleanText = stripFormatting(text);
 
         // ТОЛЬКО ВАЖНЫЕ ЛОГИ + DupeIP
-        if (text.contains("Анти-Чит") || text.contains("tried to") || text.contains("suspected") ||
-                text.contains("Проверка") || text.contains("игрок") || text.contains("режим") ||
-                text.contains("ᴄʜᴇᴀᴛᴇʀ") || text.contains("Сканирование")) {
-            Scs.LOGGER.info("[ScS-{}] Processing: '{}'", source, cleanText);
+        if (containsImportantKeywords(text)) {
+            String shortText = cleanText.length() > 100 ? cleanText.substring(0, 100) + "..." : cleanText;
+            Scs.LOGGER.info("[ScS-{}] Processing: '{}'", source, shortText);
         }
 
         if (Config.logAllChat) {
@@ -394,19 +548,48 @@ public final class ChatTap {
         }
     }
 
+    // УЛУЧШЕННЫЙ метод checkMessage
     private static void checkMessage(String text, String source) {
+        if (text == null || text.trim().isEmpty()) return;
+
+        // ЛОГИРУЕМ ВСЕ ВАЖНЫЕ СООБЩЕНИЯ ДЛЯ ОТЛАДКИ
+        if (text.contains("Сканирование") || text.contains("накиш") || text.contains("nakish")) {
+            Scs.LOGGER.info("[ScS] *** DUPEIP DEBUG *** Source: {}, Text: '{}'", source, text);
+        }
+
         Matcher m;
 
-        // ПРОВЕРКА НА DUPEIP СКАНИРОВАНИЕ
+        // ПРОВЕРКА НА DUPEIP СКАНИРОВАНИЕ - УЛУЧШЕННАЯ
         if ((m = DUPEIP_SCAN_PATTERN.matcher(text)).matches()) {
             lastScannedPlayer = m.group(1);
+            lastDupeIPScanTime = System.currentTimeMillis();
             addEntry(new Entry("DUPEIP_SCAN", "Сканирование DupeIP: " + lastScannedPlayer, lastScannedPlayer));
             Scs.LOGGER.info("[ScS] ✓ DUPEIP SCAN detected: {}", lastScannedPlayer);
             return;
         }
 
+        // АЛЬТЕРНАТИВНЫЙ паттерн для DupeIP (более простой)
+        if (text.contains("Сканирование") && text.contains("Онлайн") && text.contains("Оффлайн")) {
+            String[] words = text.split("\\s+");
+            for (int i = 0; i < words.length; i++) {
+                if ("Сканирование".equals(words[i]) && i + 1 < words.length) {
+                    String playerName = words[i + 1].replaceAll("[^a-zA-Z0-9_]", ""); // Убираем точки и прочее
+                    if (isValidPlayerName(playerName)) {
+                        lastScannedPlayer = playerName;
+                        lastDupeIPScanTime = System.currentTimeMillis();
+                        addEntry(new Entry("DUPEIP_SCAN", "Сканирование DupeIP: " + lastScannedPlayer, lastScannedPlayer));
+                        Scs.LOGGER.info("[ScS] ✓ DUPEIP SCAN (alternative) detected: {}", lastScannedPlayer);
+                        return;
+                    }
+                }
+            }
+        }
+
         // ПРОВЕРКА НА DUPEIP РЕЗУЛЬТАТЫ
-        if (lastScannedPlayer != null && (m = DUPEIP_RESULTS_PATTERN.matcher(text.trim())).matches()) {
+        if (lastScannedPlayer != null &&
+                System.currentTimeMillis() - lastDupeIPScanTime < 15000 && // 15 секунд
+                (m = DUPEIP_RESULTS_PATTERN.matcher(text.trim())).matches()) {
+
             String nicknamesStr = m.group(1);
             List<String> nicknames = Arrays.stream(nicknamesStr.split(","))
                     .map(String::trim)
@@ -613,7 +796,7 @@ public final class ChatTap {
             Scs.LOGGER.info("[ScS] Adding DupeIP buttons for player: '{}'", scannedPlayer);
 
             // Создаем компонент для копирования всех никнеймов
-            String allNicknames = String.join(" ", duplicates);
+            String allNicknames = String.join(",", duplicates);
             MutableComponent message = Component.literal("DupeIP: " + scannedPlayer + " (" + duplicates.size() + " дубликатов) ")
                     .append(Component.literal("[Копировать все]")
                             .setStyle(Style.EMPTY
@@ -622,30 +805,63 @@ public final class ChatTap {
                                     .withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT,
                                             Component.literal("Копировать в буфер: " + allNicknames)))
                             ))
-                    .append(Component.literal(" [Проверить]")
-                            .setStyle(Style.EMPTY
-                                    .withColor(ChatFormatting.GREEN)
-                                    .withClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/freezing " + scannedPlayer))
-                                    .withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT,
-                                            Component.literal("Проверить основного игрока: " + scannedPlayer)))
-                            ))
-                    .append(Component.literal(" [Активность]")
+                    .append(Component.literal(" [История всех]")
                             .setStyle(Style.EMPTY
                                     .withColor(ChatFormatting.YELLOW)
-                                    .withClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/playeractivity " + scannedPlayer))
+                                    .withClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/scs:history_all " + allNicknames))
                                     .withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT,
-                                            Component.literal("Проверить активность игрока: " + scannedPlayer)))
+                                            Component.literal("Проверить историю всех игроков с антиспамом")))
                             ))
-                    .append(Component.literal(" [История]")
+                    .append(Component.literal(" [F.История всех]")
                             .setStyle(Style.EMPTY
                                     .withColor(ChatFormatting.LIGHT_PURPLE)
-                                    .withClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/freezinghistory " + scannedPlayer))
+                                    .withClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/scs:freezing_history_all " + allNicknames))
                                     .withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT,
-                                            Component.literal("История проверок: " + scannedPlayer)))
+                                            Component.literal("Freezing история всех игроков")))
                             ));
 
             mc.gui.getChat().addMessage(message);
-            Scs.LOGGER.info("[ScS] ✓ DupeIP buttons added for: {}", scannedPlayer);
+
+            // Добавляем индивидуальные кнопки для первых 3 игроков
+            int count = 0;
+            for (String player : duplicates) {
+                if (count >= 3) break; // Ограничиваем количество
+
+                MutableComponent playerMessage = Component.literal("→ " + player + " ")
+                        .append(Component.literal("[Проверить]")
+                                .setStyle(Style.EMPTY
+                                        .withColor(ChatFormatting.GREEN)
+                                        .withClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/freezing " + player))
+                                        .withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT,
+                                                Component.literal("Проверить " + player)))
+                                ))
+                        .append(Component.literal(" [История]")
+                                .setStyle(Style.EMPTY
+                                        .withColor(ChatFormatting.YELLOW)
+                                        .withClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/history " + player))
+                                        .withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT,
+                                                Component.literal("История " + player)))
+                                ))
+                        .append(Component.literal(" [F.История]")
+                                .setStyle(Style.EMPTY
+                                        .withColor(ChatFormatting.LIGHT_PURPLE)
+                                        .withClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/freezinghistory " + player))
+                                        .withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT,
+                                                Component.literal("Freezing история " + player)))
+                                ))
+                        .append(Component.literal(" [Активность]")
+                                .setStyle(Style.EMPTY
+                                        .withColor(ChatFormatting.AQUA)
+                                        .withClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/playeractivity " + player))
+                                        .withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT,
+                                                Component.literal("Активность " + player)))
+                                ));
+
+                mc.gui.getChat().addMessage(playerMessage);
+                count++;
+            }
+
+            Scs.LOGGER.info("[ScS] ✓ DupeIP buttons added for: {} ({} individual buttons)", scannedPlayer, count);
 
         } catch (Exception e) {
             Scs.LOGGER.error("[ScS] Error adding DupeIP buttons: {}", e.getMessage());
@@ -733,6 +949,7 @@ public final class ChatTap {
         DUPEIP_SCAN_RESULTS.clear();
         processedMessages.clear();
         lastScannedPlayer = null;
+        lastDupeIPScanTime = 0;
         Scs.LOGGER.info("[ScS] All entries cleared (including player chat and DupeIP)");
     }
 

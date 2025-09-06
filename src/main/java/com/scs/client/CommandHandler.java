@@ -2,18 +2,18 @@ package com.scs.client;
 
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.client.event.ClientChatEvent;
-import net.minecraftforge.event.CommandEvent;
+import net.minecraftforge.fml.common.Mod;
+import net.minecraftforge.api.distmarker.Dist;
 import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
 import com.scs.Scs;
 
+@Mod.EventBusSubscriber(modid = Scs.MODID, value = Dist.CLIENT, bus = Mod.EventBusSubscriber.Bus.FORGE)
 public class CommandHandler {
 
     @SubscribeEvent
-    public void onClientChat(ClientChatEvent event) {
+    public static void onClientChat(ClientChatEvent event) {
         String message = event.getMessage();
-
-        Scs.LOGGER.info("[ScS] ClientChatEvent: '{}'", message);
 
         // Перехватываем специальные команды ScS
         if (message.startsWith("/scs:")) {
@@ -24,9 +24,23 @@ public class CommandHandler {
             handleScSCommand(message);
             return;
         }
+
+        // Перехватываем команды от наших кнопок для логирования
+        if (message.startsWith("/freezing ") || message.startsWith("/matrix spectate ")) {
+            String[] parts = message.split(" ", 3);
+            if (parts.length >= 2) {
+                String command = parts[0].substring(1); // убираем /
+                if (parts.length >= 3 && "matrix".equals(command)) {
+                    command = "matrix " + parts[1]; // matrix spectate
+                }
+                String target = parts[parts.length - 1]; // берем последний аргумент как имя игрока
+
+                logCommand(command, target, message);
+            }
+        }
     }
 
-    private void handleScSCommand(String command) {
+    private static void handleScSCommand(String command) {
         try {
             Minecraft mc = Minecraft.getInstance();
 
@@ -54,7 +68,7 @@ public class CommandHandler {
                 for (String player : players) {
                     String cleanPlayer = player.trim();
                     if (!cleanPlayer.isEmpty()) {
-                        CommandScheduler.scheduleCommand("/freezinghistory " + cleanPlayer, "Freezing история для " + cleanPlayer);
+                        CommandScheduler.scheduleCommand("/freezinghistory " + cleanPlayer, "F.История для " + cleanPlayer);
                     }
                 }
 
@@ -75,6 +89,9 @@ public class CommandHandler {
             } else if (command.equals("/scs:help")) {
                 showHelp();
 
+            } else if (command.equals("/scs:status")) {
+                showStatus();
+
             } else {
                 mc.gui.getChat().addMessage(Component.literal(
                         "§c[ScS] Неизвестная команда. Используйте /scs:help"));
@@ -85,13 +102,30 @@ public class CommandHandler {
         }
     }
 
-    private void showHelp() {
+    private static void showHelp() {
         Minecraft mc = Minecraft.getInstance();
         mc.gui.getChat().addMessage(Component.literal("§6=== ScS Команды ==="));
         mc.gui.getChat().addMessage(Component.literal("§e/scs:history_all ник1,ник2,ник3 §7- история всех игроков"));
         mc.gui.getChat().addMessage(Component.literal("§e/scs:freezing_history_all ник1,ник2 §7- freezing история всех"));
         mc.gui.getChat().addMessage(Component.literal("§e/scs:clear_queue §7- очистить очередь команд"));
         mc.gui.getChat().addMessage(Component.literal("§e/scs:delay 1200 §7- задержка между командами (мс)"));
+        mc.gui.getChat().addMessage(Component.literal("§e/scs:status §7- показать статус мода"));
         mc.gui.getChat().addMessage(Component.literal("§7Текущая очередь: " + CommandScheduler.getQueueSize() + " команд"));
+    }
+
+    private static void showStatus() {
+        Minecraft mc = Minecraft.getInstance();
+        mc.gui.getChat().addMessage(Component.literal("§6=== ScS Статус ==="));
+        mc.gui.getChat().addMessage(Component.literal("§7Записей в памяти: " + ChatTap.ENTRIES.size()));
+        mc.gui.getChat().addMessage(Component.literal("§7Нарушений: " + ChatTap.VIOLATIONS.size()));
+        mc.gui.getChat().addMessage(Component.literal("§7DupeIP сканов: " + ChatTap.getDupeIPResults().size()));
+        mc.gui.getChat().addMessage(Component.literal("§7Сообщений чата: " + ChatTap.PLAYER_CHAT.size()));
+        mc.gui.getChat().addMessage(Component.literal("§7" + CommandScheduler.getQueueInfo()));
+    }
+
+    private static void logCommand(String command, String target, String fullMessage) {
+        String logEntry = String.format("Command executed: %s -> %s (full: %s)",
+                command.toUpperCase(), target, fullMessage);
+        Scs.LOGGER.info(logEntry);
     }
 }
