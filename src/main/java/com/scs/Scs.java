@@ -12,7 +12,6 @@ import net.minecraftforge.eventbus.api.SubscribeEvent;
 import com.scs.client.ChatTap;
 import com.scs.client.HudOverlay;
 import com.scs.client.ChatButtonHandler;
-import com.scs.client.MassCommandHandler;
 import com.scs.client.ShaurmaSystem;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -29,9 +28,9 @@ public final class Scs {
         // Регистрируем на MOD bus для инициализации
         FMLJavaModLoadingContext.get().getModEventBus().addListener(this::onClientSetup);
 
-        // Только на клиенте - ТОЛЬКО НУЖНОЕ
+        // Только на клиенте - ТОЛЬКО НУЖНЫЕ КОМПОНЕНТЫ
         DistExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () -> {
-            // Регистрируем только ОСНОВНЫЕ обработчики
+            // Регистрируем только основные обработчики
             MinecraftForge.EVENT_BUS.register(new ChatTap());
             MinecraftForge.EVENT_BUS.register(new HudOverlay());
             MinecraftForge.EVENT_BUS.register(new ChatButtonHandler());
