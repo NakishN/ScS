@@ -66,6 +66,9 @@ public class ShaurmaSystem {
             if (Config.shaurmaSounds) {
                 playBonusSound();
             }
+
+            // ЛОГИРУЕМ ТОЛЬКО БОНУСЫ
+            Scs.LOGGER.info("[ScS] Shaurma BONUS: +{}x{} = {} (total: {})", Config.shaurmaBaseReward, BONUS_MULTIPLIERS[bonusIndex], reward, shaurmaCount + reward);
         } else {
             // Обычная шаурма
             message = TAP_MESSAGES[random.nextInt(TAP_MESSAGES.length)];
@@ -84,9 +87,11 @@ public class ShaurmaSystem {
         // Сохраняем каждые 10 тапов
         if (totalTaps % 10 == 0) {
             saveShaurmaData();
+            // Логируем каждые 50 тапов
+            if (totalTaps % 50 == 0) {
+                Scs.LOGGER.info("[ScS] Shaurma milestone: {} taps, {} shaurma total", totalTaps, shaurmaCount);
+            }
         }
-
-        Scs.LOGGER.info("Shaurma tap: +{} (total: {})", reward, shaurmaCount);
     }
 
     private static void sendShaurmaMessage(String message, int reward) {
@@ -130,7 +135,10 @@ public class ShaurmaSystem {
                 );
             }
         } catch (Exception e) {
-            Scs.LOGGER.warn("Failed to play tap sound: {}", e.getMessage());
+            // Убираем частые логи ошибок звука
+            if (totalTaps % 100 == 0) {
+                Scs.LOGGER.warn("[ScS] Sound issues detected (logged every 100 taps)");
+            }
         }
     }
 
@@ -163,7 +171,7 @@ public class ShaurmaSystem {
                 delayedSound.start();
             }
         } catch (Exception e) {
-            Scs.LOGGER.warn("Failed to play bonus sound: {}", e.getMessage());
+            // Убираем частые логи ошибок
         }
     }
 
@@ -178,7 +186,7 @@ public class ShaurmaSystem {
             lastSaveTime = System.currentTimeMillis();
 
         } catch (IOException e) {
-            Scs.LOGGER.error("Failed to save shaurma data", e);
+            Scs.LOGGER.error("[ScS] Failed to save shaurma data", e);
         }
     }
 
@@ -195,11 +203,15 @@ public class ShaurmaSystem {
                         lastSaveTime = Long.parseLong(parts[2]);
                     }
 
-                    Scs.LOGGER.info("Loaded shaurma data: {} shaurma, {} taps", shaurmaCount, totalTaps);
+                    Scs.LOGGER.info("[ScS] Loaded shaurma data: {} shaurma, {} taps", shaurmaCount, totalTaps);
                 }
+            } else {
+                Scs.LOGGER.info("[ScS] Starting fresh shaurma session!");
             }
         } catch (Exception e) {
-            Scs.LOGGER.error("Failed to load shaurma data", e);
+            Scs.LOGGER.error("[ScS] Failed to load shaurma data, starting fresh", e);
+            shaurmaCount = 0;
+            totalTaps = 0;
         }
     }
 
@@ -231,9 +243,15 @@ public class ShaurmaSystem {
 
     // Сброс данных (для отладки)
     public static void resetData() {
+        long oldShaurma = shaurmaCount;
+        long oldTaps = totalTaps;
+
         shaurmaCount = 0;
         totalTaps = 0;
         saveShaurmaData();
+
+        // Логируем только при сбросе
+        Scs.LOGGER.info("[ScS] Shaurma data reset: was {} shaurma, {} taps", oldShaurma, oldTaps);
 
         Minecraft mc = Minecraft.getInstance();
         if (mc.gui != null) {
